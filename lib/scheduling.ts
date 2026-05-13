@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { Student } from './types'
-import { StudentTrack, CourseChoice } from './schedule-types'
+import { StudentTrack, CourseChoice, StudentSchedule, UnassignedStudent } from './schedule-types'
 
 export async function categorizeStudentsForGrade(gradeId: string): Promise<void> {
   // Fetch all students in grade
@@ -236,4 +236,79 @@ export async function findAvailableSections(
       max_capacity: course.max_capacity,
     },
   ]
+}
+
+export async function assignStudentToSchedule(
+  student: Student,
+  gradeId: string,
+  scheduleTemplate: any[]
+): Promise<{ schedule: StudentSchedule | null; unassigned: UnassignedStudent[] }> {
+  const unassignedReasons: UnassignedStudent[] = []
+  const schedule: Partial<StudentSchedule> = { student_id: student.id }
+  const assignedSections: AssignedSection[] = []
+
+  try {
+    // Get student's course choices
+    const choices = await getStudentCourseChoices(student, gradeId)
+
+    // For each course choice, find and assign the best section
+    for (const choice of choices) {
+      const availableSections = await findAvailableSections(
+        choice.course_id,
+        choice.period,
+        assignedSections,
+        scheduleTemplate
+      )
+
+      if (availableSections.length === 0) {
+        unassignedReasons.push({
+          student_id: student.id,
+          student_name: `${student.first_name} ${student.last_name}`,
+          reason: 'no_available_sections',
+          failed_course: choice.course_id,
+        })
+        continue
+      }
+
+      // Pick section with lowest enrollment (greedy balance)
+      const bestSection = availableSections.reduce((prev, current) =>
+        prev.current_enrollment < current.current_enrollment ? prev : current
+      )
+
+      // Assign to this section
+      ;(schedule as any)[`period_${choice.period}_course_id`] = bestSection.course_id
+      assignedSections.push({ course_id: bestSection.course_id, period: choice.period })
+
+      // Update enrollment in database
+      const { error: assignError } = await supabase
+        .from('student_assignments')
+        .insert({
+          student_id: student.id,
+          course_id: bestSection.course_id,
+          slot_type: 'assignment', // placeholder
+        })
+
+      if (assignError) {
+        console.error(`Failed to assign ${student.id} to ${bestSection.course_id}:`, assignError)
+      }
+    }
+
+    // Check if student got all required periods
+    const requiredPeriods = [1, 2, 3, 4, 5, 6, 7]
+    const missingPeriods = requiredPeriods.filter(
+      p => !(schedule as any)[`period_${p}_course_id`]
+    )
+
+    if (missingPeriods.length > 0) {
+      return { schedule: null, unassigned: unassignedReasons }
+    }
+
+    return {
+      schedule: schedule as StudentSchedule,
+      unassigned: unassignedReasons,
+    }
+  } catch (error) {
+    console.error(`Error assigning schedule for student ${student.id}:`, error)
+    return { schedule: null, unassigned: unassignedReasons }
+  }
 }
