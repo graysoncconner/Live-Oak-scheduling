@@ -1,0 +1,45 @@
+import { supabase } from './supabase'
+import { Student } from './types'
+import { StudentTrack } from './schedule-types'
+
+export async function categorizeStudentsForGrade(gradeId: string): Promise<void> {
+  // Fetch all students in grade
+  const { data: students, error } = await supabase
+    .from('students')
+    .select('*')
+    .eq('grade_id', gradeId)
+
+  if (error) throw error
+  if (!students || students.length === 0) return
+
+  const total = students.length
+  const honorCount = Math.ceil(total * 0.15)
+  const mixedCount = Math.ceil(total * 0.05)
+
+  const updates = []
+
+  // Mark honors students
+  for (let i = 0; i < honorCount && i < students.length; i++) {
+    updates.push({ id: students[i].id, track: 'honors' as StudentTrack })
+  }
+
+  // Mark mixed students
+  for (let i = honorCount; i < honorCount + mixedCount && i < students.length; i++) {
+    updates.push({ id: students[i].id, track: 'mixed' as StudentTrack })
+  }
+
+  // Mark regular students
+  for (let i = honorCount + mixedCount; i < students.length; i++) {
+    updates.push({ id: students[i].id, track: 'regular' as StudentTrack })
+  }
+
+  // Batch update students
+  for (const update of updates) {
+    const { error: updateError } = await supabase
+      .from('students')
+      .update({ track: update.track })
+      .eq('id', update.id)
+
+    if (updateError) throw updateError
+  }
+}
