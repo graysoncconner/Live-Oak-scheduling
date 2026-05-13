@@ -191,3 +191,49 @@ export function hasConflict(
     detectConflict(section.period, newPeriod, scheduleTemplate)
   )
 }
+
+export interface SectionOption {
+  course_id: string
+  period: number
+  current_enrollment: number
+  max_capacity: number
+}
+
+export async function findAvailableSections(
+  courseId: string,
+  period: number,
+  assignedSections: AssignedSection[],
+  scheduleTemplate: any[]
+): Promise<SectionOption[]> {
+  // Get the course
+  const { data: course, error: courseError } = await supabase
+    .from('courses')
+    .select('*')
+    .eq('id', courseId)
+    .single()
+
+  if (courseError || !course) return []
+
+  // For simplicity, treat each course as one "section" per period
+  // (In a fuller implementation, you might have multiple sections of the same course)
+  const enrollment = await getSectionEnrollment(courseId)
+
+  // Check if assigning to this period would create a conflict
+  if (hasConflict(assignedSections, period, scheduleTemplate)) {
+    return [] // Conflict, can't use this section
+  }
+
+  // Check if section is full
+  if (enrollment >= course.max_capacity) {
+    return [] // Full
+  }
+
+  return [
+    {
+      course_id: courseId,
+      period: period,
+      current_enrollment: enrollment,
+      max_capacity: course.max_capacity,
+    },
+  ]
+}
