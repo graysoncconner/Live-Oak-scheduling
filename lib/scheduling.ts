@@ -1,13 +1,11 @@
 import { supabase } from './supabase'
-import { getScheduleTemplate } from './supabase'
 import { Student } from './types'
-import { StudentTrack, CourseChoice, StudentSchedule, UnassignedStudent, SchedulingResult } from './schedule-types'
+import { StudentTrack, CourseChoice, StudentSchedule, UnassignedStudent, SchedulingResult, SectionOption } from './schedule-types'
 
 export async function categorizeStudentsForGrade(gradeId: string): Promise<void> {
-  // Fetch all students in grade
   const { data: students, error } = await supabase
     .from('students')
-    .select('*')
+    .select('id')
     .eq('grade_id', gradeId)
 
   if (error) throw error
@@ -17,75 +15,57 @@ export async function categorizeStudentsForGrade(gradeId: string): Promise<void>
   const honorCount = Math.ceil(total * 0.15)
   const mixedCount = Math.ceil(total * 0.05)
 
-  const updates = []
+  for (let i = 0; i < students.length; i++) {
+    let track: StudentTrack
+    if (i < honorCount) track = 'honors'
+    else if (i < honorCount + mixedCount) track = 'mixed'
+    else track = 'regular'
 
-  // Mark honors students
-  for (let i = 0; i < honorCount && i < students.length; i++) {
-    updates.push({ id: students[i].id, track: 'honors' as StudentTrack })
-  }
-
-  // Mark mixed students
-  for (let i = honorCount; i < honorCount + mixedCount && i < students.length; i++) {
-    updates.push({ id: students[i].id, track: 'mixed' as StudentTrack })
-  }
-
-  // Mark regular students
-  for (let i = honorCount + mixedCount; i < students.length; i++) {
-    updates.push({ id: students[i].id, track: 'regular' as StudentTrack })
-  }
-
-  // Batch update students
-  for (const update of updates) {
     const { error: updateError } = await supabase
       .from('students')
-      .update({ track: update.track })
-      .eq('id', update.id)
+      .update({ track })
+      .eq('id', students[i].id)
 
     if (updateError) throw updateError
   }
 }
 
 export async function assignRandomElectives(gradeId: string): Promise<void> {
-  // Fetch all students in grade
   const { data: students, error: studentsError } = await supabase
     .from('students')
-    .select('*')
+    .select('id')
     .eq('grade_id', gradeId)
 
   if (studentsError) throw studentsError
   if (!students || students.length === 0) return
 
-  // Fetch available electives
   const { data: tthElectives, error: tthError } = await supabase
     .from('courses')
-    .select('*')
+    .select('id')
     .eq('grade_id', gradeId)
     .eq('slot_type', 'elective_tth')
 
   const { data: mwfElectives, error: mwfError } = await supabase
     .from('courses')
-    .select('*')
+    .select('id')
     .eq('grade_id', gradeId)
     .eq('slot_type', 'elective_mwf')
 
-  if (tthError || mwfError) throw tthError || mwfError
-  if (!tthElectives || tthElectives.length === 0) throw new Error('No T/Th electives found')
-  if (!mwfElectives || mwfElectives.length === 0) throw new Error('No M/W/F electives found')
+  if (tthError) throw tthError
+  if (mwfError) throw mwfError
+  if (!tthElectives || tthElectives.length === 0) throw new Error('No T/Th electives found for this grade')
+  if (!mwfElectives || mwfElectives.length === 0) throw new Error('No M/W/F electives found for this grade')
 
-  // Assign random electives to each student
   for (const student of students) {
-    const randomTth = tthElectives[Math.floor(Math.random() * tthElectives.length)]
-    const randomMwf = mwfElectives[Math.floor(Math.random() * mwfElectives.length)]
+    const tth = tthElectives[Math.floor(Math.random() * tthElectives.length)]
+    const mwf = mwfElectives[Math.floor(Math.random() * mwfElectives.length)]
 
-    const { error: updateError } = await supabase
+    const { error } = await supabase
       .from('students')
-      .update({
-        elective_tth_id: randomTth.id,
-        elective_mwf_id: randomMwf.id,
-      })
+      .update({ elective_tth_id: tth.id, elective_mwf_id: mwf.id })
       .eq('id', student.id)
 
-    if (updateError) throw updateError
+    if (error) throw error
   }
 }
 
@@ -95,77 +75,38 @@ export async function getStudentCourseChoices(
 ): Promise<CourseChoice[]> {
   const choices: CourseChoice[] = []
 
-  // Fetch all courses for the grade
-  const { data: allCourses, error: courseError } = await supabase
+  const { data: courses, error } = await supabase
     .from('courses')
     .select('*')
     .eq('grade_id', gradeId)
 
-  if (courseError) throw courseError
-  if (!allCourses) return []
+  if (error) throw error
+  if (!courses) return []
 
-  // Helper to find course by slot_type and level
-  const findCourseBySlotType = (slotType: string, level?: 'honors' | 'regular' | 'ap') => {
-    return allCourses.find(c => {
-      if (c.slot_type !== slotType) return false
-      if (level === 'honors') return c.name.toLowerCase().includes('honors')
-      if (level === 'ap') return c.name.toLowerCase().includes('ap')
-      if (level === 'regular') return !c.name.toLowerCase().includes('honors') && !c.name.toLowerCase().includes('ap')
-      return true
-    })
+  const findBySlot = (slotType: string, preferHonors = false) => {
+    const pool = courses.filter(c => c.slot_type === slotType)
+    if (preferHonors) {
+      const honors = pool.find(
+        c => c.name.toLowerCase().includes('honors') || c.name.toLowerCase().includes('ap')
+      )
+      if (honors) return honors
+    }
+    return pool[0] ?? null
   }
 
-  // Helper to find core courses by name pattern (History, Literature, Rhetoric, Language)
-  const findCourseByName = (namePattern: string) => {
-    return allCourses.find(c => c.name.toLowerCase().includes(namePattern.toLowerCase()))
-  }
+  // Science: honors/mixed → prefer honors course; regular → first available
+  const science = findBySlot('science', student.track === 'honors' || student.track === 'mixed')
+  if (science) choices.push({ slot_type: 'science', course_id: science.id })
 
-  // Period 1: History (fixed core course)
-  const history = findCourseByName('history')
-  if (history) choices.push({ period: 1, course_id: history.id })
+  // Math: honors only → prefer honors course; mixed/regular → first available
+  const math = findBySlot('math', student.track === 'honors')
+  if (math) choices.push({ slot_type: 'math', course_id: math.id })
 
-  // Period 2: Science (track-dependent via slot_type)
-  let science
-  if (student.track === 'honors' || student.track === 'mixed') {
-    science = findCourseBySlotType('science', 'honors') || findCourseBySlotType('science', 'ap')
-  } else {
-    science = findCourseBySlotType('science', 'regular')
-  }
-  if (science) choices.push({ period: 2, course_id: science.id })
-
-  // Period 3: Literature (fixed core course)
-  const literature = findCourseByName('literature')
-  if (literature) choices.push({ period: 3, course_id: literature.id })
-
-  // Period 4: Rhetoric (fixed core course)
-  const rhetoric = findCourseByName('rhetoric')
-  if (rhetoric) choices.push({ period: 4, course_id: rhetoric.id })
-
-  // Period 5: Math (track-dependent via slot_type)
-  let math
-  if (student.track === 'honors') {
-    math = findCourseBySlotType('math', 'honors')
-  } else {
-    // 'mixed' and 'regular' students take regular math
-    math = findCourseBySlotType('math', 'regular')
-  }
-  if (math) choices.push({ period: 5, course_id: math.id })
-
-  // Period 6: Language (fixed core course)
-  const language = findCourseByName('language')
-  if (language) choices.push({ period: 6, course_id: language.id })
-
-  // Period 7: Elective (randomly choose between T/Th and M/W/F)
-  const usesTth = Math.random() > 0.5
-  const electiveId = usesTth ? student.elective_tth_id : student.elective_mwf_id
-  if (electiveId) choices.push({ period: 7, course_id: electiveId })
+  // Electives: use whatever the student already has assigned
+  if (student.elective_tth_id) choices.push({ slot_type: 'elective_tth', course_id: student.elective_tth_id })
+  if (student.elective_mwf_id) choices.push({ slot_type: 'elective_mwf', course_id: student.elective_mwf_id })
 
   return choices
-}
-
-export function detectConflict(period1: number, period2: number): boolean {
-  if (period1 === 8 || period2 === 8) return false
-  return period1 !== period2
 }
 
 export async function getSectionEnrollment(courseId: string): Promise<number> {
@@ -175,126 +116,80 @@ export async function getSectionEnrollment(courseId: string): Promise<number> {
     .eq('course_id', courseId)
 
   if (error) throw error
-  return data?.length || 0
+  return data?.length ?? 0
 }
 
-export interface AssignedSection {
-  course_id: string
-  period: number
-}
-
-export function hasConflict(assignedSections: AssignedSection[], newPeriod: number): boolean {
-  return assignedSections.some(section => detectConflict(section.period, newPeriod))
-}
-
-export interface SectionOption {
-  course_id: string
-  period: number
-  current_enrollment: number
-  max_capacity: number
-}
-
-export async function findAvailableSections(
-  courseId: string,
-  period: number,
-  assignedSections: AssignedSection[]
-): Promise<SectionOption[]> {
-  const { data: course, error: courseError } = await supabase
+export async function findAvailableSections(courseId: string): Promise<SectionOption[]> {
+  const { data: course, error } = await supabase
     .from('courses')
     .select('*')
     .eq('id', courseId)
     .single()
 
-  if (courseError || !course) return []
-
-  if (hasConflict(assignedSections, period)) return []
+  if (error || !course) return []
 
   const enrollment = await getSectionEnrollment(courseId)
   if (enrollment >= course.max_capacity) return []
 
-  return [{ course_id: courseId, period, current_enrollment: enrollment, max_capacity: course.max_capacity }]
+  return [{ course_id: courseId, slot_type: course.slot_type, current_enrollment: enrollment, max_capacity: course.max_capacity }]
 }
 
 export async function assignStudentToSchedule(
   student: Student,
   gradeId: string
 ): Promise<{ schedule: StudentSchedule | null; unassigned: UnassignedStudent[] }> {
-  const unassignedReasons: UnassignedStudent[] = []
+  const unassigned: UnassignedStudent[] = []
   const schedule: Partial<StudentSchedule> = { student_id: student.id }
-  const assignedSections: AssignedSection[] = []
+
+  const slotToField: Record<string, keyof StudentSchedule> = {
+    science: 'science_course_id',
+    math: 'math_course_id',
+    elective_tth: 'elective_tth_course_id',
+    elective_mwf: 'elective_mwf_course_id',
+  }
 
   try {
     const choices = await getStudentCourseChoices(student, gradeId)
 
     for (const choice of choices) {
-      const availableSections = await findAvailableSections(
-        choice.course_id,
-        choice.period,
-        assignedSections
-      )
+      const sections = await findAvailableSections(choice.course_id)
 
-      if (availableSections.length === 0) {
-        unassignedReasons.push({
+      if (sections.length === 0) {
+        unassigned.push({
           student_id: student.id,
           student_name: `${student.first_name} ${student.last_name}`,
-          reason: 'no_available_sections',
-          failed_course: choice.course_id,
+          reason: 'section_full',
+          failed_slot: choice.slot_type,
         })
         continue
       }
 
-      // Pick section with lowest enrollment (greedy balance)
-      const bestSection = availableSections.reduce((prev, current) =>
-        prev.current_enrollment < current.current_enrollment ? prev : current
-      )
+      // Pick lowest-enrollment section (greedy balance)
+      const best = sections.reduce((a, b) => a.current_enrollment < b.current_enrollment ? a : b)
 
-      // Assign to this section
-      ;(schedule as any)[`period_${choice.period}_course_id`] = bestSection.course_id
-      assignedSections.push({ course_id: bestSection.course_id, period: choice.period })
+      const field = slotToField[choice.slot_type]
+      if (field) (schedule as any)[field] = best.course_id
 
-      // Fetch the course to get its slot_type for the assignment
-      const { data: courseData, error: fetchCourseError } = await supabase
-        .from('courses')
-        .select('slot_type')
-        .eq('id', bestSection.course_id)
-        .single()
-
-      if (fetchCourseError || !courseData) {
-        console.error(`Failed to fetch course slot_type for ${bestSection.course_id}:`, fetchCourseError)
-        continue
-      }
-
-      // Update enrollment in database with correct slot_type
-      const { error: assignError } = await supabase
+      // Upsert so re-running doesn't create duplicates
+      const { error } = await supabase
         .from('student_assignments')
-        .insert({
-          student_id: student.id,
-          course_id: bestSection.course_id,
-          slot_type: courseData.slot_type,
-        })
+        .upsert(
+          { student_id: student.id, course_id: best.course_id, slot_type: choice.slot_type },
+          { onConflict: 'student_id,slot_type' }
+        )
 
-      if (assignError) {
-        console.error(`Failed to assign ${student.id} to ${bestSection.course_id}:`, assignError)
-      }
+      if (error) console.error(`Failed to assign ${student.id} → ${choice.slot_type}:`, error.message)
     }
 
-    // Check if student got all required periods
-    const requiredPeriods = [1, 2, 3, 4, 5, 6, 7]
-    const missingPeriods = requiredPeriods.filter(
-      p => !(schedule as any)[`period_${p}_course_id`]
-    )
+    const requiredSlots = ['science', 'math', 'elective_tth', 'elective_mwf']
+    const missing = requiredSlots.filter(s => !(schedule as any)[slotToField[s]])
 
-    if (missingPeriods.length > 0) {
-      return { schedule: null, unassigned: unassignedReasons }
-    }
+    if (missing.length > 0) return { schedule: null, unassigned }
 
-    return {
-      schedule: schedule as StudentSchedule,
-      unassigned: unassignedReasons,
-    }
+    return { schedule: schedule as StudentSchedule, unassigned }
   } catch (error) {
-    console.error(`Error assigning schedule for student ${student.id}:`, error)
-    return { schedule: null, unassigned: unassignedReasons }
+    console.error(`Error scheduling student ${student.id}:`, error)
+    return { schedule: null, unassigned }
   }
 }
 
@@ -302,58 +197,24 @@ export async function generateScheduleForGrade(gradeId: string): Promise<Schedul
   const assigned: StudentSchedule[] = []
   const unassigned: UnassignedStudent[] = []
 
-  try {
-    // Get schedule template for grade
-    const scheduleTemplate = await getScheduleTemplate(gradeId)
-    if (scheduleTemplate.length === 0) {
-      throw new Error(`No schedule template found for grade ${gradeId}`)
-    }
+  const { data: students, error } = await supabase
+    .from('students')
+    .select('*')
+    .eq('grade_id', gradeId)
 
-    // Get all students in grade
-    const { data: students, error: studentError } = await supabase
-      .from('students')
-      .select('*')
-      .eq('grade_id', gradeId)
+  if (error || !students) throw new Error('Failed to fetch students')
 
-    if (studentError || !students) {
-      throw new Error('Failed to fetch students')
-    }
-
-    // Process each student sequentially
-    for (const student of students) {
-      const { schedule, unassigned: studentUnassigned } = await assignStudentToSchedule(
-        student,
-        gradeId
-      )
-
-      if (schedule) {
-        assigned.push(schedule)
-      }
-
-      unassigned.push(...studentUnassigned)
-    }
-
-    return { assigned, unassigned }
-  } catch (error) {
-    console.error(`Error generating schedule for grade ${gradeId}:`, error)
-    throw error
+  for (const student of students) {
+    const { schedule, unassigned: studentUnassigned } = await assignStudentToSchedule(student, gradeId)
+    if (schedule) assigned.push(schedule)
+    unassigned.push(...studentUnassigned)
   }
+
+  return { assigned, unassigned }
 }
 
 export async function generateTestData(gradeId: string): Promise<SchedulingResult> {
-  try {
-    // Step 1: Categorize students into tracks
-    await categorizeStudentsForGrade(gradeId)
-
-    // Step 2: Assign random electives
-    await assignRandomElectives(gradeId)
-
-    // Step 3: Generate schedules
-    const result = await generateScheduleForGrade(gradeId)
-
-    return result
-  } catch (error) {
-    console.error(`Error generating test data for grade ${gradeId}:`, error)
-    throw error
-  }
+  await categorizeStudentsForGrade(gradeId)
+  await assignRandomElectives(gradeId)
+  return generateScheduleForGrade(gradeId)
 }
