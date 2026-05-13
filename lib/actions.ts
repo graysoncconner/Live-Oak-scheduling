@@ -115,6 +115,7 @@ export async function updatePeriodTemplate(id: string, data: Partial<{
 export async function generateTestDataAction(gradeId: string): Promise<SchedulingResult> {
   try {
     const result = await generateTestData(gradeId)
+    revalidatePath('/')
     return result
   } catch (error) {
     console.error('Server action error:', error)
@@ -126,6 +127,7 @@ export async function generateScheduleAction(gradeId: string): Promise<Schedulin
   try {
     const { generateScheduleForGrade } = await import('./scheduling')
     const result = await generateScheduleForGrade(gradeId)
+    revalidatePath('/')
     return result
   } catch (error) {
     console.error('Server action error:', error)

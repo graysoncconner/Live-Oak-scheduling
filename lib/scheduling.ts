@@ -163,15 +163,9 @@ export async function getStudentCourseChoices(
   return choices
 }
 
-export function detectConflict(
-  period1: number,
-  period2: number,
-  scheduleTemplate: any[]
-): boolean {
-  // Periods 1-7 all conflict with each other (same day, can't be in two places)
-  // Period 8 (athletics) doesn't conflict with anything
+export function detectConflict(period1: number, period2: number): boolean {
   if (period1 === 8 || period2 === 8) return false
-  return period1 !== period2 // any two different class periods conflict
+  return period1 !== period2
 }
 
 export async function getSectionEnrollment(courseId: string): Promise<number> {
@@ -189,14 +183,8 @@ export interface AssignedSection {
   period: number
 }
 
-export function hasConflict(
-  assignedSections: AssignedSection[],
-  newPeriod: number,
-  scheduleTemplate: any[]
-): boolean {
-  return assignedSections.some(section =>
-    detectConflict(section.period, newPeriod, scheduleTemplate)
-  )
+export function hasConflict(assignedSections: AssignedSection[], newPeriod: number): boolean {
+  return assignedSections.some(section => detectConflict(section.period, newPeriod))
 }
 
 export interface SectionOption {
@@ -209,10 +197,8 @@ export interface SectionOption {
 export async function findAvailableSections(
   courseId: string,
   period: number,
-  assignedSections: AssignedSection[],
-  scheduleTemplate: any[]
+  assignedSections: AssignedSection[]
 ): Promise<SectionOption[]> {
-  // Get the course
   const { data: course, error: courseError } = await supabase
     .from('courses')
     .select('*')
@@ -221,50 +207,30 @@ export async function findAvailableSections(
 
   if (courseError || !course) return []
 
-  // For simplicity, treat each course as one "section" per period
-  // (In a fuller implementation, you might have multiple sections of the same course)
+  if (hasConflict(assignedSections, period)) return []
+
   const enrollment = await getSectionEnrollment(courseId)
+  if (enrollment >= course.max_capacity) return []
 
-  // Check if assigning to this period would create a conflict
-  if (hasConflict(assignedSections, period, scheduleTemplate)) {
-    return [] // Conflict, can't use this section
-  }
-
-  // Check if section is full
-  if (enrollment >= course.max_capacity) {
-    return [] // Full
-  }
-
-  return [
-    {
-      course_id: courseId,
-      period: period,
-      current_enrollment: enrollment,
-      max_capacity: course.max_capacity,
-    },
-  ]
+  return [{ course_id: courseId, period, current_enrollment: enrollment, max_capacity: course.max_capacity }]
 }
 
 export async function assignStudentToSchedule(
   student: Student,
-  gradeId: string,
-  scheduleTemplate: any[]
+  gradeId: string
 ): Promise<{ schedule: StudentSchedule | null; unassigned: UnassignedStudent[] }> {
   const unassignedReasons: UnassignedStudent[] = []
   const schedule: Partial<StudentSchedule> = { student_id: student.id }
   const assignedSections: AssignedSection[] = []
 
   try {
-    // Get student's course choices
     const choices = await getStudentCourseChoices(student, gradeId)
 
-    // For each course choice, find and assign the best section
     for (const choice of choices) {
       const availableSections = await findAvailableSections(
         choice.course_id,
         choice.period,
-        assignedSections,
-        scheduleTemplate
+        assignedSections
       )
 
       if (availableSections.length === 0) {
@@ -357,8 +323,7 @@ export async function generateScheduleForGrade(gradeId: string): Promise<Schedul
     for (const student of students) {
       const { schedule, unassigned: studentUnassigned } = await assignStudentToSchedule(
         student,
-        gradeId,
-        scheduleTemplate
+        gradeId
       )
 
       if (schedule) {

@@ -15,7 +15,7 @@ export default async function Dashboard() {
 
   const gradeStats = (grades ?? []).map(g => {
     const gradeStudents = (students ?? []).filter(s => s.grade_id === g.id)
-    const totalSlots = gradeStudents.length * 4
+    const totalSlots = gradeStudents.length * 7
     const filled = (assignments ?? []).filter(a =>
       gradeStudents.some(s => s.id === a.student_id)
     ).length
