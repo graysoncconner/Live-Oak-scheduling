@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import GenerateScheduleButton from './components/GenerateScheduleButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,6 +70,7 @@ export default async function Dashboard() {
               >
                 View {grade.name}s →
               </Link>
+              <GenerateScheduleButton gradeId={grade.id} gradeName={grade.name} />
             </div>
           )
         })}
