@@ -43,3 +43,47 @@ export async function categorizeStudentsForGrade(gradeId: string): Promise<void>
     if (updateError) throw updateError
   }
 }
+
+export async function assignRandomElectives(gradeId: string): Promise<void> {
+  // Fetch all students in grade
+  const { data: students, error: studentsError } = await supabase
+    .from('students')
+    .select('*')
+    .eq('grade_id', gradeId)
+
+  if (studentsError) throw studentsError
+  if (!students || students.length === 0) return
+
+  // Fetch available electives
+  const { data: tthElectives, error: tthError } = await supabase
+    .from('courses')
+    .select('*')
+    .eq('grade_id', gradeId)
+    .eq('slot_type', 'elective_tth')
+
+  const { data: mwfElectives, error: mwfError } = await supabase
+    .from('courses')
+    .select('*')
+    .eq('grade_id', gradeId)
+    .eq('slot_type', 'elective_mwf')
+
+  if (tthError || mwfError) throw tthError || mwfError
+  if (!tthElectives || tthElectives.length === 0) throw new Error('No T/Th electives found')
+  if (!mwfElectives || mwfElectives.length === 0) throw new Error('No M/W/F electives found')
+
+  // Assign random electives to each student
+  for (const student of students) {
+    const randomTth = tthElectives[Math.floor(Math.random() * tthElectives.length)]
+    const randomMwf = mwfElectives[Math.floor(Math.random() * mwfElectives.length)]
+
+    const { error: updateError } = await supabase
+      .from('students')
+      .update({
+        elective_tth_id: randomTth.id,
+        elective_mwf_id: randomMwf.id,
+      })
+      .eq('id', student.id)
+
+    if (updateError) throw updateError
+  }
+}
