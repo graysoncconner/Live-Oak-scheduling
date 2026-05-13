@@ -356,3 +356,21 @@ export async function generateScheduleForGrade(gradeId: string): Promise<Schedul
     throw error
   }
 }
+
+export async function generateTestData(gradeId: string): Promise<SchedulingResult> {
+  try {
+    // Step 1: Categorize students into tracks
+    await categorizeStudentsForGrade(gradeId)
+
+    // Step 2: Assign random electives
+    await assignRandomElectives(gradeId)
+
+    // Step 3: Generate schedules
+    const result = await generateScheduleForGrade(gradeId)
+
+    return result
+  } catch (error) {
+    console.error(`Error generating test data for grade ${gradeId}:`, error)
+    throw error
+  }
+}
