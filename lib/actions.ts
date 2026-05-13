@@ -3,6 +3,8 @@
 import { supabase } from './supabase'
 import { revalidatePath } from 'next/cache'
 import { SlotType } from './types'
+import { generateTestData } from './scheduling'
+import { SchedulingResult } from './schedule-types'
 
 export async function assignStudentToCourse(
   studentId: string,
@@ -108,4 +110,25 @@ export async function updatePeriodTemplate(id: string, data: Partial<{
   const { error } = await supabase.from('period_templates').update(data).eq('id', id)
   if (error) throw new Error(error.message)
   revalidatePath('/schedule-template')
+}
+
+export async function generateTestDataAction(gradeId: string): Promise<SchedulingResult> {
+  try {
+    const result = await generateTestData(gradeId)
+    return result
+  } catch (error) {
+    console.error('Server action error:', error)
+    throw new Error(`Failed to generate test data: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
+}
+
+export async function generateScheduleAction(gradeId: string): Promise<SchedulingResult> {
+  try {
+    const { generateScheduleForGrade } = await import('./scheduling')
+    const result = await generateScheduleForGrade(gradeId)
+    return result
+  } catch (error) {
+    console.error('Server action error:', error)
+    throw new Error(`Failed to generate schedule: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
 }
