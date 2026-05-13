@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { Student } from './types'
-import { StudentTrack } from './schedule-types'
+import { StudentTrack, CourseChoice } from './schedule-types'
 
 export async function categorizeStudentsForGrade(gradeId: string): Promise<void> {
   // Fetch all students in grade
@@ -86,4 +86,72 @@ export async function assignRandomElectives(gradeId: string): Promise<void> {
 
     if (updateError) throw updateError
   }
+}
+
+export async function getStudentCourseChoices(
+  student: Student,
+  gradeId: string
+): Promise<CourseChoice[]> {
+  const choices: CourseChoice[] = []
+
+  // Fetch all courses for the grade
+  const { data: allCourses, error: courseError } = await supabase
+    .from('courses')
+    .select('*')
+    .eq('grade_id', gradeId)
+
+  if (courseError) throw courseError
+  if (!allCourses) return []
+
+  // Helper to find course by slot_type and level
+  const findCourse = (slotType: string, level?: 'honors' | 'regular' | 'ap') => {
+    return allCourses.find(c => {
+      if (c.slot_type !== slotType) return false
+      if (level === 'honors') return c.name.toLowerCase().includes('honors')
+      if (level === 'ap') return c.name.toLowerCase().includes('ap')
+      if (level === 'regular') return !c.name.toLowerCase().includes('honors') && !c.name.toLowerCase().includes('ap')
+      return true
+    })
+  }
+
+  // Period 1: History (fixed)
+  const history = findCourse('history')
+  if (history) choices.push({ period: 1, course_id: history.id })
+
+  // Period 2: Science (track-dependent)
+  let science
+  if (student.track === 'honors') {
+    science = findCourse('science', 'honors') || findCourse('science', 'ap')
+  } else {
+    science = findCourse('science', 'regular')
+  }
+  if (science) choices.push({ period: 2, course_id: science.id })
+
+  // Period 3: Literature (fixed)
+  const literature = findCourse('literature')
+  if (literature) choices.push({ period: 3, course_id: literature.id })
+
+  // Period 4: Rhetoric (fixed)
+  const rhetoric = findCourse('rhetoric')
+  if (rhetoric) choices.push({ period: 4, course_id: rhetoric.id })
+
+  // Period 5: Math (track-dependent)
+  let math
+  if (student.track === 'honors') {
+    math = findCourse('math', 'honors')
+  } else {
+    math = findCourse('math', 'regular')
+  }
+  if (math) choices.push({ period: 5, course_id: math.id })
+
+  // Period 6: Language (fixed)
+  const language = findCourse('language')
+  if (language) choices.push({ period: 6, course_id: language.id })
+
+  // Period 7: Elective (randomly choose between T/Th and M/W/F)
+  const usesTth = Math.random() > 0.5
+  const electiveId = usesTth ? student.elective_tth_id : student.elective_mwf_id
+  if (electiveId) choices.push({ period: 7, course_id: electiveId })
+
+  return choices
 }
