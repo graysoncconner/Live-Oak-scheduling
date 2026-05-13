@@ -155,3 +155,39 @@ export async function getStudentCourseChoices(
 
   return choices
 }
+
+export function detectConflict(
+  period1: number,
+  period2: number,
+  scheduleTemplate: any[]
+): boolean {
+  // Periods 1-7 all conflict with each other (same day, can't be in two places)
+  // Period 8 (athletics) doesn't conflict with anything
+  if (period1 === 8 || period2 === 8) return false
+  return period1 !== period2 // any two different class periods conflict
+}
+
+export async function getSectionEnrollment(courseId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('student_assignments')
+    .select('id')
+    .eq('course_id', courseId)
+
+  if (error) throw error
+  return data?.length || 0
+}
+
+export interface AssignedSection {
+  course_id: string
+  period: number
+}
+
+export function hasConflict(
+  assignedSections: AssignedSection[],
+  newPeriod: number,
+  scheduleTemplate: any[]
+): boolean {
+  return assignedSections.some(section =>
+    detectConflict(section.period, newPeriod, scheduleTemplate)
+  )
+}
