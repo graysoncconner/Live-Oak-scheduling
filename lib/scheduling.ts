@@ -105,7 +105,7 @@ export async function getStudentCourseChoices(
   if (!allCourses) return []
 
   // Helper to find course by slot_type and level
-  const findCourse = (slotType: string, level?: 'honors' | 'regular' | 'ap') => {
+  const findCourseBySlotType = (slotType: string, level?: 'honors' | 'regular' | 'ap') => {
     return allCourses.find(c => {
       if (c.slot_type !== slotType) return false
       if (level === 'honors') return c.name.toLowerCase().includes('honors')
@@ -115,38 +115,44 @@ export async function getStudentCourseChoices(
     })
   }
 
-  // Period 1: History (fixed)
-  const history = findCourse('history')
+  // Helper to find core courses by name pattern (History, Literature, Rhetoric, Language)
+  const findCourseByName = (namePattern: string) => {
+    return allCourses.find(c => c.name.toLowerCase().includes(namePattern.toLowerCase()))
+  }
+
+  // Period 1: History (fixed core course)
+  const history = findCourseByName('history')
   if (history) choices.push({ period: 1, course_id: history.id })
 
-  // Period 2: Science (track-dependent)
+  // Period 2: Science (track-dependent via slot_type)
   let science
-  if (student.track === 'honors') {
-    science = findCourse('science', 'honors') || findCourse('science', 'ap')
+  if (student.track === 'honors' || student.track === 'mixed') {
+    science = findCourseBySlotType('science', 'honors') || findCourseBySlotType('science', 'ap')
   } else {
-    science = findCourse('science', 'regular')
+    science = findCourseBySlotType('science', 'regular')
   }
   if (science) choices.push({ period: 2, course_id: science.id })
 
-  // Period 3: Literature (fixed)
-  const literature = findCourse('literature')
+  // Period 3: Literature (fixed core course)
+  const literature = findCourseByName('literature')
   if (literature) choices.push({ period: 3, course_id: literature.id })
 
-  // Period 4: Rhetoric (fixed)
-  const rhetoric = findCourse('rhetoric')
+  // Period 4: Rhetoric (fixed core course)
+  const rhetoric = findCourseByName('rhetoric')
   if (rhetoric) choices.push({ period: 4, course_id: rhetoric.id })
 
-  // Period 5: Math (track-dependent)
+  // Period 5: Math (track-dependent via slot_type)
   let math
   if (student.track === 'honors') {
-    math = findCourse('math', 'honors')
+    math = findCourseBySlotType('math', 'honors')
   } else {
-    math = findCourse('math', 'regular')
+    // 'mixed' and 'regular' students take regular math
+    math = findCourseBySlotType('math', 'regular')
   }
   if (math) choices.push({ period: 5, course_id: math.id })
 
-  // Period 6: Language (fixed)
-  const language = findCourse('language')
+  // Period 6: Language (fixed core course)
+  const language = findCourseByName('language')
   if (language) choices.push({ period: 6, course_id: language.id })
 
   // Period 7: Elective (randomly choose between T/Th and M/W/F)
@@ -280,13 +286,25 @@ export async function assignStudentToSchedule(
       ;(schedule as any)[`period_${choice.period}_course_id`] = bestSection.course_id
       assignedSections.push({ course_id: bestSection.course_id, period: choice.period })
 
-      // Update enrollment in database
+      // Fetch the course to get its slot_type for the assignment
+      const { data: courseData, error: fetchCourseError } = await supabase
+        .from('courses')
+        .select('slot_type')
+        .eq('id', bestSection.course_id)
+        .single()
+
+      if (fetchCourseError || !courseData) {
+        console.error(`Failed to fetch course slot_type for ${bestSection.course_id}:`, fetchCourseError)
+        continue
+      }
+
+      // Update enrollment in database with correct slot_type
       const { error: assignError } = await supabase
         .from('student_assignments')
         .insert({
           student_id: student.id,
           course_id: bestSection.course_id,
-          slot_type: 'assignment', // placeholder
+          slot_type: courseData.slot_type,
         })
 
       if (assignError) {
