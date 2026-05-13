@@ -44,6 +44,9 @@ export interface Student {
   zip: string | null
   created_at: string
   grade?: Grade
+  track?: 'honors' | 'mixed' | 'regular' | null
+  elective_tth_id?: string | null
+  elective_mwf_id?: string | null
 }
 
 export interface StudentAssignment {
