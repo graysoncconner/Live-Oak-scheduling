@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
+import { getScheduleTemplate } from './supabase'
 import { Student } from './types'
-import { StudentTrack, CourseChoice, StudentSchedule, UnassignedStudent } from './schedule-types'
+import { StudentTrack, CourseChoice, StudentSchedule, UnassignedStudent, SchedulingResult } from './schedule-types'
 
 export async function categorizeStudentsForGrade(gradeId: string): Promise<void> {
   // Fetch all students in grade
@@ -310,5 +311,48 @@ export async function assignStudentToSchedule(
   } catch (error) {
     console.error(`Error assigning schedule for student ${student.id}:`, error)
     return { schedule: null, unassigned: unassignedReasons }
+  }
+}
+
+export async function generateScheduleForGrade(gradeId: string): Promise<SchedulingResult> {
+  const assigned: StudentSchedule[] = []
+  const unassigned: UnassignedStudent[] = []
+
+  try {
+    // Get schedule template for grade
+    const scheduleTemplate = await getScheduleTemplate(gradeId)
+    if (scheduleTemplate.length === 0) {
+      throw new Error(`No schedule template found for grade ${gradeId}`)
+    }
+
+    // Get all students in grade
+    const { data: students, error: studentError } = await supabase
+      .from('students')
+      .select('*')
+      .eq('grade_id', gradeId)
+
+    if (studentError || !students) {
+      throw new Error('Failed to fetch students')
+    }
+
+    // Process each student sequentially
+    for (const student of students) {
+      const { schedule, unassigned: studentUnassigned } = await assignStudentToSchedule(
+        student,
+        gradeId,
+        scheduleTemplate
+      )
+
+      if (schedule) {
+        assigned.push(schedule)
+      }
+
+      unassigned.push(...studentUnassigned)
+    }
+
+    return { assigned, unassigned }
+  } catch (error) {
+    console.error(`Error generating schedule for grade ${gradeId}:`, error)
+    throw error
   }
 }
