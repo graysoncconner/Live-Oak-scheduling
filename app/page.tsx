@@ -1,65 +1,93 @@
-import Image from "next/image";
+import { supabase } from '@/lib/supabase'
+import Link from 'next/link'
 
-export default function Home() {
+export const dynamic = 'force-dynamic'
+
+export default async function Dashboard() {
+  const [{ data: grades }, { data: students }, { data: assignments }, { data: courses }] =
+    await Promise.all([
+      supabase.from('grades').select('*').order('sort_order'),
+      supabase.from('students').select('id, grade_id'),
+      supabase.from('student_assignments').select('student_id, slot_type'),
+      supabase.from('courses').select('id, grade_id, slot_type, max_capacity'),
+    ])
+
+  const gradeStats = (grades ?? []).map(g => {
+    const gradeStudents = (students ?? []).filter(s => s.grade_id === g.id)
+    const totalSlots = gradeStudents.length * 4
+    const filled = (assignments ?? []).filter(a =>
+      gradeStudents.some(s => s.id === a.student_id)
+    ).length
+    return { grade: g, studentCount: gradeStudents.length, filled, totalSlots }
+  })
+
+  const unassignedCount = (students ?? []).filter(s =>
+    !(assignments ?? []).some(a => a.student_id === s.id)
+  ).length
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <p className="text-gray-500 mt-1">Live Oak Classical School — 2025–26 Schedule</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <StatCard label="Total Students" value={(students ?? []).length} />
+        <StatCard label="Fully Unassigned" value={unassignedCount} warn={unassignedCount > 0} />
+        <StatCard label="Total Courses" value={(courses ?? []).length} />
+        <StatCard label="Assignments Made" value={(assignments ?? []).length} />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {gradeStats.map(({ grade, studentCount, filled, totalSlots }) => {
+          const pct = totalSlots > 0 ? Math.round((filled / totalSlots) * 100) : 0
+          return (
+            <div key={grade.id} className="bg-white rounded-lg border p-5 space-y-3">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-xs font-semibold text-[#2d5a1b] uppercase tracking-wide">{grade.code}</div>
+                  <div className="font-semibold text-gray-900">{grade.name}</div>
+                </div>
+                <span className="text-2xl font-bold text-gray-700">{studentCount}</span>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>Assignments</span>
+                  <span>{filled} / {totalSlots}</span>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#2d5a1b] rounded-full transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+              <Link
+                href={`/students?grade=${grade.code}`}
+                className="block text-center text-xs text-[#2d5a1b] hover:underline"
+              >
+                View {grade.name}s →
+              </Link>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="flex gap-4">
+        <Link href="/students/new" className="btn-primary">+ Add Student</Link>
+        <Link href="/students" className="btn-secondary">Manage Assignments</Link>
+        <Link href="/rosters" className="btn-secondary">View Rosters</Link>
+      </div>
     </div>
-  );
+  )
+}
+
+function StatCard({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
+  return (
+    <div className={`bg-white rounded-lg border p-5 ${warn ? 'border-amber-400' : ''}`}>
+      <div className="text-2xl font-bold text-gray-900">{value}</div>
+      <div className={`text-sm mt-1 ${warn ? 'text-amber-600' : 'text-gray-500'}`}>{label}</div>
+    </div>
+  )
 }
