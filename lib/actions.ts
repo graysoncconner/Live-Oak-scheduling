@@ -46,6 +46,7 @@ export async function addStudent(data: {
 }) {
   const { error } = await supabase.from('students').insert(data)
   if (error) throw new Error(error.message)
+  revalidatePath('/')
   revalidatePath('/students')
 }
 
@@ -62,6 +63,7 @@ export async function updateStudent(id: string, data: Partial<{
 }>) {
   const { error } = await supabase.from('students').update(data).eq('id', id)
   if (error) throw new Error(error.message)
+  revalidatePath('/')
   revalidatePath('/students')
   revalidatePath(`/students/${id}`)
 }
@@ -69,27 +71,34 @@ export async function updateStudent(id: string, data: Partial<{
 export async function deleteStudent(id: string) {
   const { error } = await supabase.from('students').delete().eq('id', id)
   if (error) throw new Error(error.message)
+  revalidatePath('/')
   revalidatePath('/students')
+  revalidatePath('/courses')
+  revalidatePath('/rosters')
 }
 
 export async function addCourse(data: {
   grade_id: string
   slot_type: SlotType
   name: string
-  teacher_name?: string
+  teacher_name?: string | null
   max_capacity: number
 }) {
-  const { error } = await supabase.from('courses').insert(data)
+  const payload = { ...data, teacher_name: data.teacher_name || null }
+  const { error } = await supabase.from('courses').insert(payload)
   if (error) throw new Error(error.message)
   revalidatePath('/courses')
+  revalidatePath('/students')
+  revalidatePath('/rosters')
 }
 
 export async function updateCourse(id: string, data: Partial<{
   name: string
-  teacher_name: string
+  teacher_name: string | null
   max_capacity: number
 }>) {
-  const { error } = await supabase.from('courses').update(data).eq('id', id)
+  const payload = { ...data, teacher_name: data.teacher_name || null }
+  const { error } = await supabase.from('courses').update(payload).eq('id', id)
   if (error) throw new Error(error.message)
   revalidatePath('/courses')
   revalidatePath('/students')
@@ -99,7 +108,10 @@ export async function updateCourse(id: string, data: Partial<{
 export async function deleteCourse(id: string) {
   const { error } = await supabase.from('courses').delete().eq('id', id)
   if (error) throw new Error(error.message)
+  revalidatePath('/')
   revalidatePath('/courses')
+  revalidatePath('/students')
+  revalidatePath('/rosters')
 }
 
 export async function updatePeriodTemplate(id: string, data: Partial<{
@@ -116,6 +128,9 @@ export async function generateTestDataAction(gradeId: string): Promise<Schedulin
   try {
     const result = await generateTestData(gradeId)
     revalidatePath('/')
+    revalidatePath('/students')
+    revalidatePath('/rosters')
+    revalidatePath('/courses')
     return result
   } catch (error) {
     console.error('Server action error:', error)
@@ -128,6 +143,9 @@ export async function generateScheduleAction(gradeId: string): Promise<Schedulin
     const { generateScheduleForGrade } = await import('./scheduling')
     const result = await generateScheduleForGrade(gradeId)
     revalidatePath('/')
+    revalidatePath('/students')
+    revalidatePath('/rosters')
+    revalidatePath('/courses')
     return result
   } catch (error) {
     console.error('Server action error:', error)

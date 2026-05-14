@@ -1,6 +1,10 @@
 import { supabase } from './supabase'
-import { Student } from './types'
+import { Student, SlotType } from './types'
 import { StudentTrack, CourseChoice, StudentSchedule, UnassignedStudent, SchedulingResult, SectionOption } from './schedule-types'
+
+function sectionBaseName(name: string): string {
+  return name.replace(/\s*\(Section \d+\)\s*$/i, '').trim()
+}
 
 export async function categorizeStudentsForGrade(gradeId: string): Promise<void> {
   const { data: students, error } = await supabase
@@ -30,6 +34,7 @@ export async function categorizeStudentsForGrade(gradeId: string): Promise<void>
   }
 }
 
+// Balanced round-robin assignment prevents all students piling into one elective.
 export async function assignRandomElectives(gradeId: string): Promise<void> {
   const { data: students, error: studentsError } = await supabase
     .from('students')
@@ -56,16 +61,109 @@ export async function assignRandomElectives(gradeId: string): Promise<void> {
   if (!tthElectives || tthElectives.length === 0) throw new Error('No T/Th electives found for this grade')
   if (!mwfElectives || mwfElectives.length === 0) throw new Error('No M/W/F electives found for this grade')
 
-  for (const student of students) {
-    const tth = tthElectives[Math.floor(Math.random() * tthElectives.length)]
-    const mwf = mwfElectives[Math.floor(Math.random() * mwfElectives.length)]
+  // Shuffle first so the cycled distribution is random, not front-loaded
+  const shuffled = [...students].sort(() => Math.random() - 0.5)
+
+  for (let i = 0; i < shuffled.length; i++) {
+    const tth = tthElectives[i % tthElectives.length]
+    const mwf = mwfElectives[i % mwfElectives.length]
 
     const { error } = await supabase
       .from('students')
       .update({ elective_tth_id: tth.id, elective_mwf_id: mwf.id })
-      .eq('id', student.id)
+      .eq('id', shuffled[i].id)
 
     if (error) throw error
+  }
+}
+
+// Before generating a schedule, ensure every course group has enough sections to
+// seat all students who need it. Creates additional "(Section N)" rows as needed.
+export async function ensureSectionCapacity(gradeId: string): Promise<void> {
+  const { data: students } = await supabase
+    .from('students')
+    .select('id, track, elective_tth_id, elective_mwf_id')
+    .eq('grade_id', gradeId)
+
+  if (!students || students.length === 0) return
+
+  const studentCount = students.length
+  const honorsMixedCount = students.filter(s => s.track === 'honors' || s.track === 'mixed').length
+  const regularCount = studentCount - honorsMixedCount
+
+  const { data: courses } = await supabase
+    .from('courses')
+    .select('*')
+    .eq('grade_id', gradeId)
+
+  if (!courses || courses.length === 0) return
+
+  // Group courses by slot_type + base name (e.g., "science::History" holds all History sections)
+  type CourseRow = typeof courses[0]
+  const groups = new Map<string, CourseRow[]>()
+  for (const c of courses) {
+    const key = `${c.slot_type}::${sectionBaseName(c.name)}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(c)
+  }
+
+  const sectionsToCreate: Array<{
+    grade_id: string
+    slot_type: string
+    name: string
+    teacher_name: null
+    max_capacity: number
+  }> = []
+
+  for (const [key, group] of groups) {
+    const separatorIdx = key.indexOf('::')
+    const slotType = key.slice(0, separatorIdx)
+    const base = key.slice(separatorIdx + 2)
+
+    const totalCapacity = group.reduce((sum, c) => sum + c.max_capacity, 0)
+    const isHonors = base.toLowerCase().includes('honors') || base.toLowerCase().includes('ap')
+    const isElective = slotType === 'elective_tth' || slotType === 'elective_mwf'
+
+    let studentsNeeding: number
+
+    if (isElective) {
+      // Count students actually assigned to any course in this section group
+      const groupIds = new Set(group.map(c => c.id))
+      const field = slotType === 'elective_tth' ? 'elective_tth_id' : 'elective_mwf_id'
+      studentsNeeding = students.filter(s => groupIds.has((s as any)[field])).length
+      if (studentsNeeding === 0) continue
+    } else if (isHonors) {
+      studentsNeeding = honorsMixedCount
+    } else {
+      // Regular core course: if an honors sibling exists, only regular-track students need this
+      const hasHonorsSibling = [...groups.keys()].some(k => {
+        if (k === key) return false
+        const kSlot = k.slice(0, k.indexOf('::'))
+        const kBase = k.slice(k.indexOf('::') + 2)
+        return kSlot === slotType && (kBase.toLowerCase().includes('honors') || kBase.toLowerCase().includes('ap'))
+      })
+      studentsNeeding = hasHonorsSibling ? regularCount : studentCount
+    }
+
+    if (totalCapacity >= studentsNeeding) continue
+
+    const maxCap = group[0].max_capacity
+    const additionalNeeded = Math.ceil((studentsNeeding - totalCapacity) / maxCap)
+
+    for (let i = 0; i < additionalNeeded; i++) {
+      sectionsToCreate.push({
+        grade_id: gradeId,
+        slot_type: slotType,
+        name: `${base} (Section ${group.length + i + 1})`,
+        teacher_name: null,
+        max_capacity: maxCap,
+      })
+    }
+  }
+
+  if (sectionsToCreate.length > 0) {
+    const { error } = await supabase.from('courses').insert(sectionsToCreate)
+    if (error) console.error('Failed to create additional sections:', error.message)
   }
 }
 
@@ -83,15 +181,18 @@ export async function getStudentCourseChoices(
   if (error) throw error
   if (!courses) return []
 
+  const isHonorsCourse = (name: string) =>
+    name.toLowerCase().includes('honors') || name.toLowerCase().includes('ap')
+
   const findBySlot = (slotType: string, preferHonors = false) => {
     const pool = courses.filter(c => c.slot_type === slotType)
     if (preferHonors) {
-      const honors = pool.find(
-        c => c.name.toLowerCase().includes('honors') || c.name.toLowerCase().includes('ap')
-      )
+      const honors = pool.find(c => isHonorsCourse(c.name))
       if (honors) return honors
     }
-    return pool[0] ?? null
+    // For non-honors preference, exclude honors/AP courses; fall back to any if none exist
+    const regular = pool.filter(c => !isHonorsCourse(c.name))
+    return regular[0] ?? pool[0] ?? null
   }
 
   // Science: honors/mixed → prefer honors course; regular → first available
@@ -119,6 +220,8 @@ export async function getSectionEnrollment(courseId: string): Promise<number> {
   return data?.length ?? 0
 }
 
+// Returns all available sections for the same course (matched by base name + slot_type),
+// with the preferred section listed first, then lowest enrollment.
 export async function findAvailableSections(courseId: string): Promise<SectionOption[]> {
   const { data: course, error } = await supabase
     .from('courses')
@@ -128,10 +231,40 @@ export async function findAvailableSections(courseId: string): Promise<SectionOp
 
   if (error || !course) return []
 
-  const enrollment = await getSectionEnrollment(courseId)
-  if (enrollment >= course.max_capacity) return []
+  const base = sectionBaseName(course.name)
 
-  return [{ course_id: courseId, slot_type: course.slot_type, current_enrollment: enrollment, max_capacity: course.max_capacity }]
+  // Fetch sibling sections: same grade + slot_type, name starts with the base name
+  const { data: candidates, error: candidatesError } = await supabase
+    .from('courses')
+    .select('*')
+    .eq('grade_id', course.grade_id)
+    .eq('slot_type', course.slot_type)
+    .ilike('name', `${base}%`)
+
+  if (candidatesError || !candidates) return []
+
+  const options: SectionOption[] = []
+  for (const candidate of candidates) {
+    // Exact base-name match only ("Art" must not fall through to "Art History")
+    if (sectionBaseName(candidate.name) !== base) continue
+
+    const enrollment = await getSectionEnrollment(candidate.id)
+    if (enrollment < candidate.max_capacity) {
+      options.push({
+        course_id: candidate.id,
+        slot_type: candidate.slot_type,
+        current_enrollment: enrollment,
+        max_capacity: candidate.max_capacity,
+      })
+    }
+  }
+
+  // Preferred section first; then sort by lowest enrollment for greedy balance
+  return options.sort((a, b) => {
+    if (a.course_id === courseId && b.course_id !== courseId) return -1
+    if (b.course_id === courseId && a.course_id !== courseId) return 1
+    return a.current_enrollment - b.current_enrollment
+  })
 }
 
 export async function assignStudentToSchedule(
@@ -194,6 +327,9 @@ export async function assignStudentToSchedule(
 }
 
 export async function generateScheduleForGrade(gradeId: string): Promise<SchedulingResult> {
+  // Ensure sufficient sections exist before assigning anyone
+  await ensureSectionCapacity(gradeId)
+
   const assigned: StudentSchedule[] = []
   const unassigned: UnassignedStudent[] = []
 

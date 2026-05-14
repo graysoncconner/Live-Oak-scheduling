@@ -15,16 +15,19 @@ export default async function Dashboard() {
 
   const gradeStats = (grades ?? []).map(g => {
     const gradeStudents = (students ?? []).filter(s => s.grade_id === g.id)
-    const totalSlots = gradeStudents.length * 7
+    const totalSlots = gradeStudents.length * 4
     const filled = (assignments ?? []).filter(a =>
       gradeStudents.some(s => s.id === a.student_id)
     ).length
     return { grade: g, studentCount: gradeStudents.length, filled, totalSlots }
   })
 
-  const unassignedCount = (students ?? []).filter(s =>
-    !(assignments ?? []).some(a => a.student_id === s.id)
-  ).length
+  const assignedStudentIds = new Set((assignments ?? []).map(a => a.student_id))
+  const unassignedCount = (students ?? []).filter(s => !assignedStudentIds.has(s.id)).length
+  const partialCount = (students ?? []).filter(s => {
+    const slotsFilled = new Set((assignments ?? []).filter(a => a.student_id === s.id).map(a => a.slot_type))
+    return slotsFilled.size > 0 && slotsFilled.size < 4
+  }).length
 
   return (
     <div className="space-y-8">
@@ -33,9 +36,10 @@ export default async function Dashboard() {
         <p className="text-gray-500 mt-1">Live Oak Classical School — 2025–26 Schedule</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard label="Total Students" value={(students ?? []).length} />
-        <StatCard label="Fully Unassigned" value={unassignedCount} warn={unassignedCount > 0} />
+        <StatCard label="No Assignments" value={unassignedCount} warn={unassignedCount > 0} />
+        <StatCard label="Partially Assigned" value={partialCount} warn={partialCount > 0} />
         <StatCard label="Total Courses" value={(courses ?? []).length} />
         <StatCard label="Assignments Made" value={(assignments ?? []).length} />
       </div>

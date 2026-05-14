@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { SLOT_TYPES, SLOT_LABELS, type SlotType, type Course } from '@/lib/types'
+import { SLOT_TYPES, type SlotType, type Course } from '@/lib/types'
 import { AssignmentRow } from './AssignmentRow'
 import { EditStudentForm } from './EditStudentForm'
 
@@ -22,21 +22,19 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
       .from('student_assignments')
       .select('*, course:courses(*)')
       .eq('student_id', id),
-    supabase
-      .from('courses')
-      .select('*')
-      .eq('grade_id', student.grade_id),
-    supabase
-      .from('period_templates')
-      .select('*')
-      .eq('grade_id', student.grade_id)
-      .order('period_number'),
+    student.grade_id
+      ? supabase.from('courses').select('*').eq('grade_id', student.grade_id)
+      : Promise.resolve({ data: [] }),
+    student.grade_id
+      ? supabase.from('period_templates').select('*').eq('grade_id', student.grade_id).order('period_number')
+      : Promise.resolve({ data: [] }),
   ])
 
-  // Enrollment counts per course
-  const { data: enrollmentRaw } = await supabase
-    .from('student_assignments')
-    .select('course_id')
+  // Enrollment counts — scoped to courses for this grade only
+  const gradeCourseIds = (courses ?? []).map(c => c.id)
+  const { data: enrollmentRaw } = gradeCourseIds.length > 0
+    ? await supabase.from('student_assignments').select('course_id').in('course_id', gradeCourseIds)
+    : { data: [] }
   const enrollmentCounts = new Map<string, number>()
   for (const e of enrollmentRaw ?? []) {
     enrollmentCounts.set(e.course_id, (enrollmentCounts.get(e.course_id) ?? 0) + 1)
@@ -108,7 +106,6 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
                 studentId={id}
                 period={p}
                 slotType={slotType}
-                slotLabel={SLOT_LABELS[slotType]}
                 courses={options}
                 currentAssignment={current ?? null}
               />

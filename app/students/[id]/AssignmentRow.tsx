@@ -8,7 +8,6 @@ interface Props {
   studentId: string
   period: { period_number: number; start_time: string; end_time: string; label: string }
   slotType: SlotType
-  slotLabel: string
   courses: Course[]
   currentAssignment: { id: string; course_id: string; course?: Course } | null
 }

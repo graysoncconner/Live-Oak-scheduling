@@ -77,14 +77,18 @@ export function EditStudentForm({ student, grades }: { student: Student; grades:
         <label className="label">Phone</label>
         <input name="phone" defaultValue={student.phone ?? ''} className="input" />
       </div>
+      <div>
+        <label className="label">Address</label>
+        <input name="address" defaultValue={student.address ?? ''} className="input" />
+      </div>
       <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-3 sm:col-span-1">
-          <label className="label">Address</label>
-          <input name="address" defaultValue={student.address ?? ''} className="input" />
-        </div>
         <div>
           <label className="label">City</label>
           <input name="city" defaultValue={student.city ?? ''} className="input" />
+        </div>
+        <div>
+          <label className="label">State</label>
+          <input name="state" defaultValue={student.state ?? 'TX'} className="input" />
         </div>
         <div>
           <label className="label">Zip</label>
