@@ -1,13 +1,18 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { updateStudent, deleteStudent } from '@/lib/actions'
+import { updateStudent, deleteStudent, updateStudentNotes } from '@/lib/actions'
 import { useRouter } from 'next/navigation'
 import type { Student, Grade } from '@/lib/types'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
+import toast from 'react-hot-toast'
 
 export function EditStudentForm({ student, grades }: { student: Student; grades: Grade[] }) {
   const [editing, setEditing] = useState(false)
   const [pending, startTransition] = useTransition()
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [notesPending, startNotesTransition] = useTransition()
   const router = useRouter()
 
   function handleSave(e: React.FormEvent<HTMLFormElement>) {
@@ -30,7 +35,11 @@ export function EditStudentForm({ student, grades }: { student: Student; grades:
   }
 
   function handleDelete() {
-    if (!confirm(`Delete ${student.first_name} ${student.last_name}? This cannot be undone.`)) return
+    setDeleteConfirmOpen(true)
+  }
+
+  function confirmDelete() {
+    setDeleteConfirmOpen(false)
     startTransition(async () => {
       await deleteStudent(student.id)
       router.push('/students')
@@ -43,10 +52,49 @@ export function EditStudentForm({ student, grades }: { student: Student; grades:
         <InfoRow label="Parents" value={student.parents} />
         <InfoRow label="Phone" value={student.phone} />
         <InfoRow label="Address" value={[student.address, student.city, student.state, student.zip].filter(Boolean).join(', ')} />
+        {/* Notes - collapsible */}
+        <div className="border-t border-gray-50 pt-2 mt-2">
+          <button
+            type="button"
+            onClick={() => setNotesOpen(o => !o)}
+            className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
+          >
+            <span>{notesOpen ? '▾' : '▸'}</span>
+            <span>Notes {student.notes ? '•' : ''}</span>
+          </button>
+          {notesOpen && (
+            <div className="mt-2 space-y-2">
+              <textarea
+                className="input text-sm min-h-[80px] w-full resize-y"
+                defaultValue={student.notes ?? ''}
+                placeholder="e.g., needs aide, IEP accommodation…"
+                onBlur={e => {
+                  const val = e.target.value
+                  startNotesTransition(async () => {
+                    try {
+                      await updateStudentNotes(student.id, val)
+                      toast.success('Notes saved')
+                    } catch {
+                      toast.error('Failed to save notes')
+                    }
+                  })
+                }}
+              />
+              {notesPending && <p className="text-xs text-gray-400">Saving…</p>}
+            </div>
+          )}
+        </div>
         <div className="flex gap-2 pt-2">
           <button onClick={() => setEditing(true)} className="btn-secondary">Edit</button>
           <button onClick={handleDelete} className="btn-danger" disabled={pending}>Delete</button>
         </div>
+        <ConfirmDialog
+          open={deleteConfirmOpen}
+          title={`Delete ${student.first_name} ${student.last_name}?`}
+          description="This will permanently delete the student and all their schedule assignments. This cannot be undone."
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteConfirmOpen(false)}
+        />
       </div>
     )
   }

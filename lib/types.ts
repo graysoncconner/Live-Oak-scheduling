@@ -47,6 +47,7 @@ export interface Student {
   track?: 'honors' | 'mixed' | 'regular' | null
   elective_tth_id?: string | null
   elective_mwf_id?: string | null
+  notes?: string | null
 }
 
 export interface StudentAssignment {

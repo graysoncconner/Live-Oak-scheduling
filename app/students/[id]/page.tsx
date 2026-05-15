@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { SLOT_TYPES, type SlotType, type Course } from '@/lib/types'
 import { AssignmentRow } from './AssignmentRow'
 import { EditStudentForm } from './EditStudentForm'
+import { StudentPreferencesSection } from './StudentPreferencesSection'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,6 +47,9 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
     assignmentBySlot.set(a.slot_type, a)
   }
 
+  const electiveTthCourses = (courses ?? []).filter(c => c.slot_type === 'elective_tth')
+  const electiveMwfCourses = (courses ?? []).filter(c => c.slot_type === 'elective_mwf')
+
   const coursesBySlot = new Map<SlotType, Course[]>()
   for (const c of courses ?? []) {
     const arr = coursesBySlot.get(c.slot_type as SlotType) ?? []
@@ -60,6 +64,12 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
         <h1 className="text-2xl font-bold">{student.last_name}, {student.first_name}</h1>
         <span className="badge-gray">{student.grade?.code} — {student.grade?.name}</span>
       </div>
+
+      <StudentPreferencesSection
+        student={student}
+        electiveTthCourses={electiveTthCourses}
+        electiveMwfCourses={electiveMwfCourses}
+      />
 
       {/* Schedule assignments */}
       <section className="card">

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import toast from 'react-hot-toast'
 import { generateTestDataAction, generateScheduleAction } from '@/lib/actions'
 
 interface Props {
@@ -23,9 +24,14 @@ export default function GenerateScheduleButton({ gradeId, gradeName }: Props) {
       const res = mode === 'reset'
         ? await generateTestDataAction(gradeId)
         : await generateScheduleAction(gradeId)
-      setResult({ assigned: res.assigned.length, unassigned: res.unassigned.length })
+      const assigned = res.assigned.length
+      const unassigned = res.unassigned.length
+      setResult({ assigned, unassigned })
+      toast.success(`${assigned} assigned, ${unassigned} unassigned`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
+      const msg = e instanceof Error ? e.message : 'Unknown error'
+      setError(msg)
+      toast.error(msg)
     } finally {
       setLoading(null)
     }

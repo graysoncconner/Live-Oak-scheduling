@@ -1,10 +1,17 @@
 'use server'
 
 import { supabase } from './supabase'
+import { createSupabaseServerClient } from './supabase-auth'
 import { revalidatePath } from 'next/cache'
 import { SlotType } from './types'
 import { generateTestData } from './scheduling'
 import { SchedulingResult } from './schedule-types'
+
+async function requireAdminUser() {
+  const client = await createSupabaseServerClient()
+  const { data: { user } } = await client.auth.getUser()
+  if (!user) throw new Error('Unauthorized')
+}
 
 export async function assignStudentToCourse(
   studentId: string,
@@ -151,4 +158,100 @@ export async function generateScheduleAction(gradeId: string): Promise<Schedulin
     console.error('Server action error:', error)
     throw new Error(`Failed to generate schedule: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
+}
+
+export async function clearGradeSchedule(gradeId: string) {
+  await requireAdminUser()
+  const { data: students } = await supabase.from('students').select('id').eq('grade_id', gradeId)
+  if (!students || students.length === 0) return
+
+  const studentIds = students.map(s => s.id)
+  const { error } = await supabase
+    .from('student_assignments')
+    .delete()
+    .in('student_id', studentIds)
+
+  if (error) throw new Error(error.message)
+  revalidatePath('/')
+  revalidatePath('/students')
+  revalidatePath('/rosters')
+}
+
+export async function saveStudentPreferences(
+  studentId: string,
+  data: {
+    track?: 'honors' | 'mixed' | 'regular' | null
+    elective_tth_id?: string | null
+    elective_mwf_id?: string | null
+  }
+) {
+  await requireAdminUser()
+  const { error } = await supabase.from('students').update(data).eq('id', studentId)
+  if (error) throw new Error(error.message)
+  revalidatePath(`/students/${studentId}`)
+  revalidatePath('/')
+}
+
+export async function importStudents(
+  rows: Array<{
+    first_name: string
+    last_name: string
+    grade_code: string
+    parents?: string
+    phone?: string
+  }>
+): Promise<{ imported: number; failed: number; errors: string[] }> {
+  await requireAdminUser()
+  const { data: grades } = await supabase.from('grades').select('id, code')
+  const gradeMap = new Map<string, string>()
+  for (const g of grades ?? []) {
+    gradeMap.set(g.code.toUpperCase(), g.id)
+  }
+
+  let imported = 0
+  let failed = 0
+  const errors: string[] = []
+
+  for (const row of rows) {
+    const gradeId = gradeMap.get(row.grade_code.toUpperCase())
+    if (!gradeId) {
+      errors.push(`Row for ${row.first_name} ${row.last_name}: unknown grade code "${row.grade_code}"`)
+      failed++
+      continue
+    }
+    const { error } = await supabase.from('students').insert({
+      first_name: row.first_name.trim(),
+      last_name: row.last_name.trim(),
+      grade_id: gradeId,
+      parents: row.parents?.trim() || null,
+      phone: row.phone?.trim() || null,
+    })
+    if (error) {
+      errors.push(`Row for ${row.first_name} ${row.last_name}: ${error.message}`)
+      failed++
+    } else {
+      imported++
+    }
+  }
+
+  revalidatePath('/')
+  revalidatePath('/students')
+  return { imported, failed, errors }
+}
+
+export async function updateSetting(key: string, value: string) {
+  await requireAdminUser()
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key, value }, { onConflict: 'key' })
+  if (error) throw new Error(error.message)
+  revalidatePath('/')
+}
+
+export async function updateStudentNotes(studentId: string, notes: string) {
+  await requireAdminUser()
+  const { error } = await supabase.from('students').update({ notes }).eq('id', studentId)
+  if (error) throw new Error(error.message)
+  revalidatePath(`/students/${studentId}`)
+  revalidatePath('/')
 }

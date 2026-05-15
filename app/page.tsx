@@ -1,25 +1,41 @@
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import GenerateScheduleButton from './components/GenerateScheduleButton'
+import { SchoolYearEditor } from './components/SchoolYearEditor'
+import { ClearScheduleButton } from './components/ClearScheduleButton'
 
 export const dynamic = 'force-dynamic'
 
 export default async function Dashboard() {
-  const [{ data: grades }, { data: students }, { data: assignments }, { data: courses }] =
-    await Promise.all([
-      supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('students').select('id, grade_id'),
-      supabase.from('student_assignments').select('student_id, slot_type'),
-      supabase.from('courses').select('id, grade_id, slot_type, max_capacity'),
-    ])
+  const [
+    { data: grades },
+    { data: students },
+    { data: assignments },
+    { data: courses },
+    { data: schoolYearSetting },
+  ] = await Promise.all([
+    supabase.from('grades').select('*').order('sort_order'),
+    supabase.from('students').select('id, grade_id'),
+    supabase.from('student_assignments').select('student_id, slot_type, course_id'),
+    supabase.from('courses').select('id, grade_id, slot_type, max_capacity'),
+    supabase.from('settings').select('value').eq('key', 'school_year').single(),
+  ])
+
+  const schoolYear = schoolYearSetting?.value ?? '2025-26'
 
   const gradeStats = (grades ?? []).map(g => {
     const gradeStudents = (students ?? []).filter(s => s.grade_id === g.id)
+    const gradeStudentIds = new Set(gradeStudents.map(s => s.id))
     const totalSlots = gradeStudents.length * 4
-    const filled = (assignments ?? []).filter(a =>
-      gradeStudents.some(s => s.id === a.student_id)
-    ).length
-    return { grade: g, studentCount: gradeStudents.length, filled, totalSlots }
+    const filled = (assignments ?? []).filter(a => gradeStudentIds.has(a.student_id)).length
+
+    const gradeCourses = (courses ?? []).filter(c => c.grade_id === g.id)
+    const hasCapacityAlert = gradeCourses.some(c => {
+      const enrolled = (assignments ?? []).filter(a => a.course_id === c.id).length
+      return c.max_capacity > 0 && enrolled >= c.max_capacity * 0.9
+    })
+
+    return { grade: g, studentCount: gradeStudents.length, filled, totalSlots, hasCapacityAlert }
   })
 
   const assignedStudentIds = new Set((assignments ?? []).map(a => a.student_id))
@@ -33,7 +49,9 @@ export default async function Dashboard() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-500 mt-1">Live Oak Classical School — 2025–26 Schedule</p>
+        <p className="text-gray-500 mt-1">
+          <SchoolYearEditor initialValue={schoolYear} />
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
@@ -45,13 +63,20 @@ export default async function Dashboard() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {gradeStats.map(({ grade, studentCount, filled, totalSlots }) => {
+        {gradeStats.map(({ grade, studentCount, filled, totalSlots, hasCapacityAlert }) => {
           const pct = totalSlots > 0 ? Math.round((filled / totalSlots) * 100) : 0
           return (
             <div key={grade.id} className="bg-white rounded-lg border p-5 space-y-3">
               <div className="flex justify-between items-start">
                 <div>
-                  <div className="text-xs font-semibold text-[#2d5a1b] uppercase tracking-wide">{grade.code}</div>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#2d5a1b] uppercase tracking-wide">
+                    {grade.code}
+                    {hasCapacityAlert && (
+                      <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium" title="Some courses near capacity">
+                        ⚠ Capacity
+                      </span>
+                    )}
+                  </div>
                   <div className="font-semibold text-gray-900">{grade.name}</div>
                 </div>
                 <span className="text-2xl font-bold text-gray-700">{studentCount}</span>
@@ -75,6 +100,7 @@ export default async function Dashboard() {
                 View {grade.name}s →
               </Link>
               <GenerateScheduleButton gradeId={grade.id} gradeName={grade.name} />
+              <ClearScheduleButton gradeId={grade.id} gradeName={grade.name} />
             </div>
           )
         })}
